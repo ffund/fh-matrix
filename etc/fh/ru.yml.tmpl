@@ -1,0 +1,53 @@
+# ProtO-RU soft O-RU on POWDER - rendered by bin/fh-setup.sh on @HOST@
+# fronthaul @FH@ (@MY_MAC@) <- O-DU @PEER_MAC@, untagged; USRP @DEVARGS@; isolated cores @ISO@
+log:
+  filename: @RUN@/ru.log
+  level: info
+ru_emu:
+  timing_cpus: [@TIMING@]
+  cells:
+    - network_interface: @FH@
+      ru_mac_addr: @MY_MAC@
+      du_mac_addr: @PEER_MAC@
+      enable_promiscuous: true
+      bandwidth: @BW@
+      common_scs: 30
+      dl_arfcn: @ARFCN@
+      band: @BAND@
+      dl_port_id: [0]
+      ul_port_id: [0]
+      prach_port_id: [4]
+      prach_format: short
+      compr_method_dl: bfp
+      compr_bitwidth_dl: 9
+      compr_method_ul: bfp
+      compr_bitwidth_ul: 9
+      compr_method_prach: bfp
+      compr_bitwidth_prach: 9
+      is_ul_static_compr_hdr: true
+      is_dl_static_compr_hdr: true
+      iq_scaling: 1.0
+      t2a_max_cp_dl: 2435
+      t2a_min_cp_dl: 2235
+      t2a_max_cp_ul: 2435                  # the OCUDU value (2835 is for OAI)
+      t2a_min_cp_ul: 2235
+      t2a_max_up: 2215
+      t2a_min_up: 2015
+      ta3_max_up: 1200
+      ta3_min_up: 800
+      ofh_cpus: [@OFH@]                    # >= 3 per cell, or ProtO-RU's OFH threads share and go late
+      sdr:
+        device_driver: uhd
+        device_args: @DEVARGS@
+        srate: @SRATE@
+        tx_gain: @TX_GAIN@
+        rx_gain: @RX_GAIN@
+        gain_backoff: 12
+        enable_clipping: true
+        power_ceiling: -0.1
+        clock_source: @CLOCK@
+        sync_source: @CLOCK@
+        max_proc_delay: 2
+        execution_profile: auto
+        ru_cpus: [@RUCPUS@]
+        pinning_policy: mask
