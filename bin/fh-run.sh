@@ -3,11 +3,15 @@
 # Start the OCUDU gNB (du) or ProtO-RU (ru) from the config fh-setup.sh rendered in /opt/fh/run.
 # Start the RU first, so it is listening when the DU begins to send. Run with sudo.
 RUN=/opt/fh/run; ALL=0-$(( $(nproc --all) - 1 ))
+# The image's ProtO-RU links the distro's UHD 4.9. POWDER's radios carry FPGA images for UHD 4.10,
+# so use the build against /opt/fh/uhd (UHD 4.10 from source) when the node has one.
+RUBIN=/opt/fh/proto-ru/build/apps/examples/ofh/ru_emulator
+[ -x /opt/fh/proto-ru/build-uhd410/apps/examples/ofh/ru_emulator ] && RUBIN=/opt/fh/proto-ru/build-uhd410/apps/examples/ofh/ru_emulator
 case "${1:-}" in
   ru)
     [ -f $RUN/ru.yml ] || { echo "no $RUN/ru.yml: fh-setup.sh has not finished (see $RUN/fh-setup.log)"; exit 1; }
     systemctl stop fh-ru 2>/dev/null; sleep 1; : > $RUN/ru.log
-    systemd-run --unit=fh-ru --collect -q bash -c "sleep infinity | taskset -c $ALL stdbuf -oL /opt/fh/proto-ru/build/apps/examples/ofh/ru_emulator -c $RUN/ru.yml > $RUN/ru-stdout.log 2>&1"
+    systemd-run --unit=fh-ru --collect -q bash -c "sleep infinity | LD_LIBRARY_PATH=/opt/fh/uhd/lib taskset -c $ALL stdbuf -oL $RUBIN -c $RUN/ru.yml > $RUN/ru-stdout.log 2>&1"
     sleep 8; pgrep -x ru_emulator >/dev/null && echo "RU up; per-second counters in $RUN/ru-stdout.log" || { echo "RU exited:"; tail -20 $RUN/ru-stdout.log; exit 1; } ;;
   du)
     [ -f $RUN/du.yml ] || { echo "no $RUN/du.yml: fh-setup.sh has not finished (see $RUN/fh-setup.log)"; exit 1; }

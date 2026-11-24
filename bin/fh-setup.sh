@@ -84,6 +84,17 @@ ping -c 2 -W 1 -M do -s 8972 -I "$FH" "$PEER_IP" >/dev/null 2>&1 && echo "jumbo 
 
 # PTP: the image's start_ptp.sh expects its configs in /opt/fh/twonode.
 sudo cp $REPO/etc/fh/ptp-gm.cfg $REPO/etc/fh/ptp-slave.cfg /opt/fh/twonode/
+# Ubuntu 26.04 confines ptp4l with AppArmor to configs under /etc/linuxptp; allow ours too.
+if [ -f /etc/apparmor.d/usr.sbin.ptp4l ]; then
+  echo "/opt/fh/twonode/*.cfg r," | sudo tee /etc/apparmor.d/local/usr.sbin.ptp4l >/dev/null
+  sudo apparmor_parser -r /etc/apparmor.d/usr.sbin.ptp4l
+fi
+# The phc2sys profile lacks write access to ptp4l's socket, so "phc2sys -w" waits forever.
+if [ -f /etc/apparmor.d/usr.sbin.phc2sys ]; then
+  # (that profile has no local include, so add the rule to the profile itself)
+  grep -q '^  /run/ptp4l rw,' /etc/apparmor.d/usr.sbin.phc2sys || sudo sed -i '$ s|^}|  /run/ptp4l rw,\n}|' /etc/apparmor.d/usr.sbin.phc2sys
+  sudo apparmor_parser -r /etc/apparmor.d/usr.sbin.phc2sys
+fi
 if [ "$ROLE" = du ]; then sudo /opt/fh/twonode/start_ptp.sh gm "$FH"; else sudo /opt/fh/twonode/start_ptp.sh slave "$FH"; fi
 
 DEVARGS=""; SRATE=""
