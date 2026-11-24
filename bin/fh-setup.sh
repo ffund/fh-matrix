@@ -120,7 +120,12 @@ if [ -f /etc/apparmor.d/usr.sbin.phc2sys ]; then
   grep -q '^  /run/ptp4l rw,' /etc/apparmor.d/usr.sbin.phc2sys || sudo sed -i '$ s|^}|  /run/ptp4l rw,\n}|' /etc/apparmor.d/usr.sbin.phc2sys
   sudo apparmor_parser -r /etc/apparmor.d/usr.sbin.phc2sys
 fi
-if [ "$ROLE" = du ]; then sudo /opt/fh/twonode/start_ptp.sh gm "$FH"; else sudo /opt/fh/twonode/start_ptp.sh slave "$FH"; fi
+# PTP runs on the fronthaul link, unless the profile gave PTP its own direct link (10.10.2.x, used when a tap
+# node bridges the fronthaul: a software bridge would spoil the timestamps).
+if [ "$ROLE" = du ]; then PTP_IP=10.10.2.1; else PTP_IP=10.10.2.2; fi
+PTPIF=$(ip -o -4 addr show | awk -v ip="$PTP_IP" '{split($4,a,"/"); if (a[1]==ip) print $2}' | head -1)
+[ -n "$PTPIF" ] && echo "PTP on its own link: $PTPIF ($PTP_IP)" || PTPIF=$FH
+if [ "$ROLE" = du ]; then sudo /opt/fh/twonode/start_ptp.sh gm "$PTPIF"; else sudo /opt/fh/twonode/start_ptp.sh slave "$PTPIF"; fi
 
 DEVARGS=""; SRATE=""
 if [ "$ROLE" = ru ]; then
