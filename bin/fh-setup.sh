@@ -146,14 +146,20 @@ v = dict(HOST=os.uname().nodename, FH=E['FH'], MY_MAC=E['MY_MAC'], PEER_MAC=E['P
          BAND=E['BAND'], ARFCN=E['ARFCN'], BW=E['BW'], PCI=E['PCI'], PLMN=E['PLMN'], TAC=E['TAC'], RUN=E['RUN'])
 if role == 'du':
     if len(iso) < 4: raise SystemExit('!! need 4 isolated cores for the DU, have %s' % iso)
-    ru, ofh = iso[0:2], iso[2:4]
+    # One core only for the DU's timing thread. With two, the scheduler moves the thread to the second core
+    # whenever a kernel timer (the machine-check poll, every 327.68 s) briefly takes the first, and its next
+    # wake-up there comes 1 ms late, which makes about a dozen downlink messages late at the RU.
+    ru, ofh = iso[0:1], iso[2:4]
     # As on COSMOS: the upper-PHY pool is every other core except CPU 0.
     pool = [c for c in range(1, os.cpu_count()) if primary(c) and c not in ru + ofh]
     v.update(AMF_ADDR=E['AMF_ADDR'], AMF_BIND=E['AMF_BIND'], RUCPUS=','.join(map(str, ru)), OFH=','.join(map(str, ofh)),
              POOL=','.join(map(str, pool)), NTHR=str(min(16, len(pool))))
 else:
     if len(iso) < 7: raise SystemExit('!! need 7 isolated cores for ProtO-RU, have %s' % iso)
-    v.update(TIMING=str(iso[0]), OFH=', '.join(map(str, iso[1:4])), RUCPUS=', '.join(map(str, iso[4:7])),
+    # ProtO-RU has five radio/lower-PHY threads (ru_radio, ru_phy_tx, ru_phy_ul, ru_phy_rx, ru_phy_hp). On three
+    # cores they share, and under a full-band downlink the lower PHY logs "Downlink data late" hundreds of times a
+    # second; the gNB then loses the uplink. Give them five cores when the host has them.
+    v.update(TIMING=str(iso[0]), OFH=', '.join(map(str, iso[1:4])), RUCPUS=', '.join(map(str, iso[4:9])),
              DEVARGS=E['DEVARGS'], SRATE=E['SRATE'], TX_GAIN=E['TX_GAIN'], RX_GAIN=E['RX_GAIN'], CLOCK=E['CLOCK'])
 t = open('/local/repository/etc/fh/%s.yml.tmpl' % role).read()
 for k, val in v.items():
