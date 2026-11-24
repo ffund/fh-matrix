@@ -18,7 +18,11 @@ import geni.rspec.emulab as emulab
 
 
 tourDescription = """
-### O-RAN 7.2 fronthaul capture: OCUDU O-DU + ProtO-RU on the programmable attenuator matrix
+### O-RAN 7.2 fronthaul capture through a tap node: OCUDU O-DU + ProtO-RU on the attenuator matrix
+
+**Branch `tap`.** A third node (`tap`) bridges the fronthaul between `du` and `ruhost` and records it with
+`sudo /local/repository/bin/fh-tapcap.sh <name> [seconds]`, so neither end captures. PTP runs on a separate
+direct link.
 
 A conducted 5G cell split at O-RAN 7.2, for capturing the DU-to-RU fronthaul with a
 commercial UE and programmable path loss. **Untested as a whole**: each part ran
@@ -206,6 +210,15 @@ pc.defineParameter(
     advanced=True,
 )
 pc.defineParameter(
+    name="tap_nodetype",
+    description="Type of compute node for the tap that bridges and records the fronthaul",
+    typ=portal.ParameterType.STRING,
+    defaultValue=node_types[1],
+    legalValues=node_types,
+    longDescription="A d430 takes a firmware interrupt once per second that stalls it for about 430 us, "
+                    "so as a tap it holds the fronthaul for that long each second. Use it only to compare.",
+)
+pc.defineParameter(
     name="fh_image",
     description="Disk image for the O-DU and ProtO-RU hosts",
     typ=portal.ParameterType.STRING,
@@ -235,8 +248,26 @@ cn_node.addService(pg.Execute(shell="bash", command=OPEN5GS_DEPLOY_SCRIPT))
 
 # The fronthaul: one link between the O-DU and the ProtO-RU host. fh-setup.sh finds its
 # interface by these addresses. The frames on it are raw Ethernet (eCPRI), untagged.
-fh_link = request.Link("fh-link")
+# Tap variant: the fronthaul is two links with a tap node bridging them (bin/fh-tap.sh), and PTP has its own
+# direct DU-to-RU link so the software bridge does not touch the timestamps.
+fh_link = request.Link("fh-du-tap")
 fh_link.setNoBandwidthShaping()
+fh_link2 = request.Link("fh-tap-ru")
+fh_link2.setNoBandwidthShaping()
+ptp_link = request.Link("ptp-link")
+ptp_link.setNoBandwidthShaping()
+
+tap = request.RawPC("tap")
+tap.component_manager_id = COMP_MANAGER_ID
+tap.hardware_type = params.tap_nodetype
+tap.disk_image = params.fh_image
+tap_du_if = tap.addInterface("tap-du-if")
+tap_du_if.addAddress(pg.IPv4Address("10.10.1.11", "255.255.255.0"))
+fh_link.addInterface(tap_du_if)
+tap_ru_if = tap.addInterface("tap-ru-if")
+tap_ru_if.addAddress(pg.IPv4Address("10.10.1.12", "255.255.255.0"))
+fh_link2.addInterface(tap_ru_if)
+tap.addService(pg.Execute(shell="bash", command=os.path.join(BIN_PATH, "fh-tap.sh")))
 
 node_name = "du"
 du = request.RawPC(node_name)
@@ -249,6 +280,9 @@ cn_link.addInterface(du_cn_if)
 du_fh_if = du.addInterface("{}-fh-if".format(node_name))
 du_fh_if.addAddress(pg.IPv4Address("10.10.1.1", "255.255.255.0"))
 fh_link.addInterface(du_fh_if)
+du_ptp_if = du.addInterface("du-ptp-if")
+du_ptp_if.addAddress(pg.IPv4Address("10.10.2.1", "255.255.255.0"))
+ptp_link.addInterface(du_ptp_if)
 du.addService(pg.Execute(shell="bash", command="{} du {} AMF_ADDR=192.168.1.1 AMF_BIND=192.168.1.2".format(FH_SETUP_SCRIPT, cell_args)))
 # Attenuator control works from the compute nodes, not the NUCs. Set the start values for
 # the paths between the chosen radio and the allocated UEs (real attenuation is 30 + value dB).
@@ -265,7 +299,10 @@ ruhost.hardware_type = params.fh_nodetype
 ruhost.disk_image = params.fh_image
 ru_fh_if = ruhost.addInterface("{}-fh-if".format(node_name))
 ru_fh_if.addAddress(pg.IPv4Address("10.10.1.2", "255.255.255.0"))
-fh_link.addInterface(ru_fh_if)
+fh_link2.addInterface(ru_fh_if)
+ru_ptp_if = ruhost.addInterface("ruhost-ptp-if")
+ru_ptp_if.addAddress(pg.IPv4Address("10.10.2.2", "255.255.255.0"))
+ptp_link.addInterface(ru_ptp_if)
 node_sdr_if = ruhost.addInterface("usrp_if")
 node_sdr_if.addAddress(pg.IPv4Address("192.168.30.1", "255.255.255.0"))
 sdr_link = request.Link("{}-sdr-link".format(node_name))
