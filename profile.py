@@ -18,95 +18,67 @@ import geni.rspec.emulab as emulab
 
 
 tourDescription = """
-### O-RAN 7.2 fronthaul capture: OCUDU O-DU + ProtO-RU on the programmable attenuator matrix
+### O-RAN 7.2 fronthaul capture: OCUDU O-DU + ProtO-RU + a DPDK tap, on the attenuator matrix
 
-A conducted 5G cell split at O-RAN 7.2, for capturing the DU-to-RU fronthaul with a
-commercial UE and programmable path loss. **Untested as a whole**: each part ran
-separately (see the notes in the instructions).
+A conducted 5G cell split at O-RAN 7.2, with a commercial UE, programmable path loss, and a
+tap node that forwards and records the fronthaul between the DU and the radio unit.
 
-Deployed:
+Deployed (defaults):
 
-- `cn5g`: Open5GS core (Dell R430), installed the way PowderTeam/srs-rf-matrix does it.
-- `du`: OCUDU O-DU and CU (Dell R740, image `fronthaul-d740-u26rt-uhd410`).
-- `ruhost`: ProtO-RU software O-RU (Dell R740, same image), driving the radio.
+- `du`: OCUDU O-DU and CU (d740, image `fronthaul-d740-u26rt-uhd410`).
+- `ruhost`: ProtO-RU software O-RU (d740, same image), driving the radio.
+- `tap` (d740, same image): forwards every fronthaul frame between `du` and `ruhost` with DPDK
+  and records them with `dpdk-dumpcap`, so neither end captures. Its clock follows PTP.
+- `cn5g`: Open5GS core (d430), as PowderTeam/srs-rf-matrix installs it. With `core_on_du`
+  the image's own Open5GS runs on `du` instead and no `cn5g` node is allocated.
 - `ru-sdr`: the radio on the matrix, X310 `x310-1` or N300 `n300-2`.
-- `ue1` (and optionally `ue2`): Intel NUC with a Quectel RM520 COTS UE.
+- `ue1` (and optionally `ue2`): Intel NUC with a Quectel RM520N-GL.
 
-The fronthaul is the `fh-link` between `du` and `ruhost`. It runs untagged, with PTP
-from `du` (grandmaster) to `ruhost`.
+PTP (DU = grandmaster) runs on a separate `ptp-link` as unicast UDP, because Layer-2 PTP
+multicast does not cross POWDER's racks. Turn `use_tap` off for the older layout: one
+`fh-link` between `du` and `ruhost`, PTP on it, and captures taken on `du`.
 """
 
 tourInstructions = """
 Startup scripts are still running when the experiment becomes ready. Wait until the
-"Startup" column shows "Finished" for every compute node.
+"Startup" column shows "Finished" for every compute node. A host whose fronthaul NIC sits on
+the other CPU socket re-isolates its cores and reboots once by itself.
 
-**1. Check the setup on both hosts.** `fh-setup.sh` prepared the host, started PTP and
-rendered a config. Its log ends with `fh-setup <role> done` on success:
-
-```
-# on du and on ruhost
-tail -5 /opt/fh/run/fh-setup.log
-```
-
-On `ruhost` the log also shows which radio address UHD found. If UHD reports an FPGA
-or RFNoC compatibility mismatch, the radio carries an image for another UHD release
-than the 4.9 in the image. For the X310:
+**1. Check the setup.**
 
 ```
-# on ruhost
-sudo uhd_images_downloader -t x3xx
-uhd_image_loader --args="type=x300,addr=<radio address>,fpga=XG"
-# power cycle ru-sdr from the portal list view, wait a minute, then rerun:
-sudo /local/repository/bin/fh-setup.sh ru <same KEY=VALUE arguments as in the startup log>
+tail -5 /opt/fh/run/fh-setup.log     # on du and ruhost: ends with "fh-setup <role> done"
+tail -5 /opt/fh/run/fh-tap.log       # on tap: ends with "fh-tap done (DPDK)"
+tail -2 /opt/fh/twonode/ptp4l.log    # on ruhost and tap: "rms" lines of a few ns
 ```
 
 **2. Start the O-RU, then the O-DU.**
 
 ```
-# on ruhost
-sudo /local/repository/bin/fh-run.sh ru
-# on du
-sudo /local/repository/bin/fh-run.sh du
+sudo /local/repository/bin/fh-run.sh ru       # on ruhost
+sudo /local/repository/bin/fh-run.sh du       # on du
+sudo /local/repository/bin/fh-run.sh status   # either host: late counts, RCU stalls
+sudo /local/repository/bin/fh-tap-dpdk.sh status   # on tap: forwarder counters (RX-missed must stay 0)
 ```
 
-The DU prints `N2: Connection to AMF ... completed` and a fronthaul counter line.
-`rx_on_time` must equal `rx_total`, with `rx_late=0`.
-`sudo /local/repository/bin/fh-run.sh status` on either host summarises the counters.
+**3. Attach the UE.** On `ue1`: `sudo quectel-CM -s internet -4 &` then
+`/local/repository/bin/module-on.sh`. It gets an address in 10.45.0.0/16.
 
-**3. Attach the UE.**
+**4. Set the path loss.** On `du`: `bin/update-attens ru1ue1 <0..95>` (and `ru1ue2` for
+`ue2`); the real attenuation is 30 dB plus the value. `bin/atten -l` lists the paths.
 
-```
-# on ue1
-sudo quectel-CM -s internet -4          # in one session
-/local/repository/bin/module-on.sh      # in another
-```
-
-Watch the attach on `cn5g`: `sudo journalctl -u open5gs-amfd -u open5gs-smfd -f --output cat`.
-The UE scripts from srs-rf-matrix are in `/local/repository/bin` (`ue_metrics.py`,
-`ue_app.py`, `quectel_control.py`, `ue-services`).
-
-**4. Set the path loss.** Run on `du`. `bin/atten -l` lists the paths this experiment
-controls. `bin/update-attens <group> <0..95>` sets a group; the real attenuation is
-30 dB plus the value. With the X310 the groups are `ru1ue1` and `ru1ue2` (channel A to
-each UE; the profile opens these and closes channel B). With the N300 the one group is
-`uemon` (both UEs together).
-
-**5. Capture.** Traffic first (`iperf3 -s` on `cn5g`, `iperf3 -c 10.45.0.1` on the UE), then:
+**5. Capture.** Start traffic (`iperf3 -c 10.45.0.1 -R` on the UE), then on `tap`:
 
 ```
-# on du
-sudo /local/repository/bin/fh-capture.sh run1 10
-sudo /local/repository/bin/fh-run.sh stop     # flushes /dev/shm/cap/gnb_mac.pcap and gnb_ngap.pcap
+sudo /local/repository/bin/fh-tapcap-dpdk.sh run1 10    # /dev/shm/cap/run1/fh.pcap, both directions
 ```
 
-Captures are in `/dev/shm/cap` (RAM). Copy them off the node before the experiment ends.
+Stopping the gNB (`fh-run.sh stop` on `du`) writes its MAC and NGAP pcaps to `/dev/shm/cap`
+on `du`. Captures are in RAM; copy them off before the experiment ends.
 
 **Known limits**
 
-- ProtO-RU lists the B210, N310 and X410. The X310 and N300 are untested with it.
-- The cell is band n78 at the ARFCN srs-rf-matrix uses. That profile runs 20 MHz; 40 MHz
-  on the matrix is untested.
-- The image isolates cores for a d740 whose experiment NIC is on NUMA node 0.
+- The tap must not be a d430: its firmware interrupts freeze every core, DPDK included.
 - ProtO-RU supports PRACH format B4 and single-section C-plane messages only.
 """
 
@@ -206,6 +178,38 @@ pc.defineParameter(
     advanced=True,
 )
 pc.defineParameter(
+    name="use_tap",
+    description="Put a tap node between the DU and the RU host that forwards and records the fronthaul",
+    typ=portal.ParameterType.BOOLEAN,
+    defaultValue=True,
+    longDescription="Default. The tap forwards with DPDK and records with dpdk-dumpcap (bin/fh-tapcap-dpdk.sh), so "
+                    "neither end runs a capture. Without it, the DU and RU host share one link and you capture on "
+                    "the DU (bin/fh-capture.sh), which delays a few downlink messages.",
+)
+pc.defineParameter(
+    name="tap_mode",
+    description="How the tap forwards",
+    typ=portal.ParameterType.STRING,
+    defaultValue="dpdk",
+    legalValues=[("dpdk", "DPDK (dpdk-testpmd + dpdk-dumpcap)"), ("bridge", "Linux kernel bridge + tcpdump")],
+)
+pc.defineParameter(
+    name="core_on_du",
+    description="Run the 5G core on the DU host instead of a separate node",
+    typ=portal.ParameterType.BOOLEAN,
+    defaultValue=False,
+    longDescription="Uses the Open5GS build in the image (bin/fh-core-local.sh), saving a node.",
+)
+pc.defineParameter(
+    name="tap_nodetype",
+    description="Type of compute node for the tap that bridges and records the fronthaul",
+    typ=portal.ParameterType.STRING,
+    defaultValue=node_types[1],
+    legalValues=node_types,
+    longDescription="Use a d740. A d430 takes firmware interrupts (1 to 2 per second) that freeze every core, "
+                    "DPDK polling cores included, so the RU sees late downlink messages every second.",
+)
+pc.defineParameter(
     name="fh_image",
     description="Disk image for the O-DU and ProtO-RU hosts",
     typ=portal.ParameterType.STRING,
@@ -220,22 +224,49 @@ request = pc.makeRequestRSpec()
 radio_type, radio_atten = RADIOS[params.radio]
 cell_args = "BAND=78 ARFCN={} BW={} PCI=1 PLMN=99999 TAC=1".format(params.dl_arfcn, params.bandwidth)
 
-# Core network, as in srs-rf-matrix.
-role = "cn5g"
-cn_node = request.RawPC(role)
-cn_node.component_manager_id = COMP_MANAGER_ID
-cn_node.hardware_type = params.cn_nodetype
-cn_node.disk_image = UBUNTU_IMG
-cn_if = cn_node.addInterface("{}-if".format(role))
-cn_if.addAddress(pg.IPv4Address("192.168.1.1", "255.255.255.0"))
-cn_link = request.Link("{}-link".format(role))
-cn_link.setNoBandwidthShaping()
-cn_link.addInterface(cn_if)
-cn_node.addService(pg.Execute(shell="bash", command=OPEN5GS_DEPLOY_SCRIPT))
+# Core network, as in srs-rf-matrix, unless it runs on the DU host.
+if not params.core_on_du:
+    role = "cn5g"
+    cn_node = request.RawPC(role)
+    cn_node.component_manager_id = COMP_MANAGER_ID
+    cn_node.hardware_type = params.cn_nodetype
+    cn_node.disk_image = UBUNTU_IMG
+    cn_if = cn_node.addInterface("{}-if".format(role))
+    cn_if.addAddress(pg.IPv4Address("192.168.1.1", "255.255.255.0"))
+    cn_link = request.Link("{}-link".format(role))
+    cn_link.setNoBandwidthShaping()
+    cn_link.addInterface(cn_if)
+    cn_node.addService(pg.Execute(shell="bash", command=OPEN5GS_DEPLOY_SCRIPT))
 
 # The fronthaul: one link between the O-DU and the ProtO-RU host. fh-setup.sh finds its
 # interface by these addresses. The frames on it are raw Ethernet (eCPRI), untagged.
-fh_link = request.Link("fh-link")
+# Tap variant: the fronthaul is two links with a tap node bridging them (bin/fh-tap.sh), and PTP has its own
+# direct DU-to-RU link so the software bridge does not touch the timestamps.
+if params.use_tap:
+    # DU -- tap -- RU host on two links; PTP on its own direct link (unicast UDP), with the tap as a second slave.
+    fh_link = request.Link("fh-du-tap")
+    fh_link2 = request.Link("fh-tap-ru")
+    fh_link2.setNoBandwidthShaping()
+    ptp_link = request.Link("ptp-link")
+    ptp_link.setNoBandwidthShaping()
+    tap = request.RawPC("tap")
+    tap.component_manager_id = COMP_MANAGER_ID
+    tap.hardware_type = params.tap_nodetype
+    tap.disk_image = params.fh_image
+    tap_du_if = tap.addInterface("tap-du-if")
+    tap_du_if.addAddress(pg.IPv4Address("10.10.1.11", "255.255.255.0"))
+    fh_link.addInterface(tap_du_if)
+    tap_ru_if = tap.addInterface("tap-ru-if")
+    tap_ru_if.addAddress(pg.IPv4Address("10.10.1.12", "255.255.255.0"))
+    fh_link2.addInterface(tap_ru_if)
+    tap_ptp_if = tap.addInterface("tap-ptp-if")
+    tap_ptp_if.addAddress(pg.IPv4Address("10.10.2.3", "255.255.255.0"))
+    ptp_link.addInterface(tap_ptp_if)
+    tap.addService(pg.Execute(shell="bash", command="{} TAP_MODE={}".format(os.path.join(BIN_PATH, "fh-tap.sh"), params.tap_mode)))
+else:
+    # One link between the DU and the RU host; PTP runs on it (DU = grandmaster).
+    fh_link = request.Link("fh-link")
+    fh_link2 = fh_link
 fh_link.setNoBandwidthShaping()
 
 node_name = "du"
@@ -243,13 +274,22 @@ du = request.RawPC(node_name)
 du.component_manager_id = COMP_MANAGER_ID
 du.hardware_type = params.fh_nodetype
 du.disk_image = params.fh_image
-du_cn_if = du.addInterface("{}-cn-if".format(node_name))
-du_cn_if.addAddress(pg.IPv4Address("192.168.1.2", "255.255.255.0"))
-cn_link.addInterface(du_cn_if)
+if not params.core_on_du:
+    du_cn_if = du.addInterface("{}-cn-if".format(node_name))
+    du_cn_if.addAddress(pg.IPv4Address("192.168.1.2", "255.255.255.0"))
+    cn_link.addInterface(du_cn_if)
+    amf_args = "AMF_ADDR=192.168.1.1 AMF_BIND=192.168.1.2"
+else:
+    du.addService(pg.Execute(shell="bash", command=os.path.join(BIN_PATH, "fh-core-local.sh")))
+    amf_args = "AMF_ADDR=127.0.0.5 AMF_BIND=127.0.0.1"
 du_fh_if = du.addInterface("{}-fh-if".format(node_name))
 du_fh_if.addAddress(pg.IPv4Address("10.10.1.1", "255.255.255.0"))
 fh_link.addInterface(du_fh_if)
-du.addService(pg.Execute(shell="bash", command="{} du {} AMF_ADDR=192.168.1.1 AMF_BIND=192.168.1.2".format(FH_SETUP_SCRIPT, cell_args)))
+if params.use_tap:
+    du_ptp_if = du.addInterface("du-ptp-if")
+    du_ptp_if.addAddress(pg.IPv4Address("10.10.2.1", "255.255.255.0"))
+    ptp_link.addInterface(du_ptp_if)
+du.addService(pg.Execute(shell="bash", command="{} du {} {}".format(FH_SETUP_SCRIPT, cell_args, amf_args)))
 # Attenuator control works from the compute nodes, not the NUCs. Set the start values for
 # the paths between the chosen radio and the allocated UEs (real attenuation is 30 + value dB).
 atten_start = {}
@@ -265,7 +305,11 @@ ruhost.hardware_type = params.fh_nodetype
 ruhost.disk_image = params.fh_image
 ru_fh_if = ruhost.addInterface("{}-fh-if".format(node_name))
 ru_fh_if.addAddress(pg.IPv4Address("10.10.1.2", "255.255.255.0"))
-fh_link.addInterface(ru_fh_if)
+fh_link2.addInterface(ru_fh_if)
+if params.use_tap:
+    ru_ptp_if = ruhost.addInterface("ruhost-ptp-if")
+    ru_ptp_if.addAddress(pg.IPv4Address("10.10.2.2", "255.255.255.0"))
+    ptp_link.addInterface(ru_ptp_if)
 node_sdr_if = ruhost.addInterface("usrp_if")
 node_sdr_if.addAddress(pg.IPv4Address("192.168.30.1", "255.255.255.0"))
 sdr_link = request.Link("{}-sdr-link".format(node_name))

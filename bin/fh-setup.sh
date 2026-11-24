@@ -125,7 +125,21 @@ fi
 if [ "$ROLE" = du ]; then PTP_IP=10.10.2.1; else PTP_IP=10.10.2.2; fi
 PTPIF=$(ip -o -4 addr show | awk -v ip="$PTP_IP" '{split($4,a,"/"); if (a[1]==ip) print $2}' | head -1)
 [ -n "$PTPIF" ] && echo "PTP on its own link: $PTPIF ($PTP_IP)" || PTPIF=$FH
-if [ "$ROLE" = du ]; then sudo /opt/fh/twonode/start_ptp.sh gm "$PTPIF"; else sudo /opt/fh/twonode/start_ptp.sh slave "$PTPIF"; fi
+if [ "$PTPIF" = "$FH" ]; then
+  if [ "$ROLE" = du ]; then sudo /opt/fh/twonode/start_ptp.sh gm "$PTPIF"; else sudo /opt/fh/twonode/start_ptp.sh slave "$PTPIF"; fi
+else
+  # Dedicated PTP link: unicast UDPv4. The two hosts may sit in different racks, and the switches between racks
+  # drop the Layer-2 PTP multicast (we saw the grandmaster's frames never reach the slave).
+  if [ "$ROLE" = du ]; then CFG=ptp-gm-udp.cfg; W=5; else CFG=ptp-slave-udp.cfg; W=30; fi
+  D=/opt/fh/twonode; sudo cp $REPO/etc/fh/$CFG $D/; echo "$D/*.cfg r," | sudo tee /etc/apparmor.d/local/usr.sbin.ptp4l >/dev/null
+  sudo apparmor_parser -r /etc/apparmor.d/usr.sbin.ptp4l 2>/dev/null
+  sudo systemctl disable --now chrony >/dev/null 2>&1; sudo timedatectl set-ntp false 2>/dev/null
+  sudo systemctl stop fh-ptp4l fh-phc2sys 2>/dev/null; sleep 1
+  sudo systemd-run --unit=fh-ptp4l --collect -q bash -c "ptp4l -i $PTPIF -f $D/$CFG -m -H > $D/ptp4l.log 2>&1"
+  sleep $W
+  sudo systemd-run --unit=fh-phc2sys --collect -q bash -c "phc2sys -s $PTPIF -w -m -r -r -n 24 > $D/phc2sys.log 2>&1"
+  sleep 10; tail -1 $D/ptp4l.log; tail -1 $D/phc2sys.log
+fi
 
 DEVARGS=""; SRATE=""
 if [ "$ROLE" = ru ]; then
