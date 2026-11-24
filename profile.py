@@ -50,8 +50,10 @@ node_types = [("d430", "Emulab, d430"), ("d740", "Emulab, d740"), ("d760p", "Emu
 pc.defineParameter("ru_id", "Benetel RAN650 on the matrix", portal.ParameterType.STRING, "bru-650-5",
                    legalValues=[("bru-650-5", "bru-650-5"), ("bru-650-6", "bru-650-6")])
 pc.defineParameter("ue_id", "COTS UE NUC wired to that O-RU", portal.ParameterType.STRING, "nuc16")
-pc.defineParameter("bandwidth", "Cell bandwidth in MHz", portal.ParameterType.INTEGER, 20,
-                   legalValues=[(20, "20 MHz"), (40, "40 MHz"), (100, "100 MHz")])
+pc.defineParameter("bandwidth", "Cell bandwidth in MHz", portal.ParameterType.INTEGER, 10,
+                   legalValues=[(10, "10 MHz (no spectrum reservation needed)"), (20, "20 MHz"), (40, "40 MHz"), (100, "100 MHz")],
+                   longDescription="POWDER requests spectrum for the O-RU even on the matrix. Anything wider than "
+                                   "10 MHz needs a frequency reservation covering the cell.")
 pc.defineParameter("dl_arfcn", "Downlink NR-ARFCN (band n78)", portal.ParameterType.INTEGER, 624668,
                    longDescription="624668 is 3370.02 MHz, the value in POWDER's RAN650 config.")
 pc.defineParameter("compression", "Fronthaul compression header mode", portal.ParameterType.STRING, "static",
