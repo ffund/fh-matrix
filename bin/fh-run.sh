@@ -16,11 +16,11 @@ case "${1:-}" in
     # UHD's helper threads inherit real-time priority 89 from ProtO-RU. uhd_ctrl_ep* busy-polls, so at that
     # priority it starves the kernel's RCU thread on its CPU: the kernel then reports an RCU stall every 180 s
     # and each report stalls the radio path for ~5 ms (a burst of "RF: late"). Run them as ordinary threads
-    # on housekeeping CPUs instead.
+    # on housekeeping CPUs instead (fh-setup.sh picks ones that do not take the NIC interrupts).
     RUPID=$(pgrep -x ru_emulator)
     for t in $(ls /proc/$RUPID/task 2>/dev/null); do
       case "$(cat /proc/$RUPID/task/$t/comm 2>/dev/null)" in
-        uhd_ctrl_ep*|x300_claimer|uhd_log|action_handler|mpm_*|uhd_*) chrt -o -p 0 $t; taskset -pc 1,3,5 $t >/dev/null ;;
+        uhd_ctrl_ep*|x300_claimer|uhd_log|action_handler|mpm_*|uhd_*) chrt -o -p 0 $t; taskset -pc $(cat $RUN/helper_cpus 2>/dev/null || echo 1,3,5) $t >/dev/null ;;
       esac
     done
     pgrep -x ru_emulator >/dev/null && echo "RU up; per-second counters in $RUN/ru-stdout.log" || { echo "RU exited:"; tail -20 $RUN/ru-stdout.log; exit 1; } ;;

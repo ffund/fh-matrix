@@ -57,7 +57,23 @@ PY
 )
 sudo /opt/fh/scripts/host_prep.sh "$FH" "$HK"
 echo "fronthaul NIC NUMA node: $NIC_NUMA; isolated cores: $ISO; NIC interrupts on: $HK"
-python3 - "$ISO" "$NODE_CPUS" <<'PY'
+# Three more housekeeping CPUs, away from the ones that take the NIC interrupts, for UHD's busy helper threads.
+python3 - "$ISO" "$HK" > $RUN/helper_cpus <<'PY'
+import os, sys
+def cl(s):
+    o = []
+    for p in s.split(','):
+        if p.strip():
+            a, _, b = p.partition('-'); o += range(int(a), int(b or a) + 1)
+    return o
+iso, hk = set(cl(sys.argv[1])), set(cl(sys.argv[2]))
+free = [c for c in range(1, os.cpu_count()) if c not in iso and c not in hk]
+print(','.join(map(str, free[:3])))
+PY
+# The image isolates cores on NUMA node 0. If the testbed put the fronthaul link on a NIC of the other socket,
+# move the isolation there and reboot once: with the cores on the wrong socket ProtO-RU's lower PHY runs late
+# under load ("Downlink data late") and the uplink collapses. After the reboot this check passes.
+MISMATCH=$(python3 - "$ISO" "$NODE_CPUS" <<'PY'
 import sys
 def cl(s):
     o = []
@@ -66,9 +82,18 @@ def cl(s):
             a, _, b = p.partition('-'); o += range(int(a), int(b or a) + 1)
     return o
 iso, local = cl(sys.argv[1]), cl(sys.argv[2])
-if local and not set(iso) & set(local):
-    print("!! WARNING: none of the isolated cores are on the fronthaul NIC's NUMA node; re-derive the grub isolation for this host")
+print('yes' if local and not set(iso) & set(local) else 'no')
 PY
+)
+if [ "$MISMATCH" = yes ]; then
+  if [ -f /var/tmp/fh-reisolated ]; then
+    echo "!! WARNING: isolated cores are still not on the fronthaul NIC's NUMA node $NIC_NUMA after one re-isolation"
+  else
+    echo "isolated cores ($ISO) are not on the fronthaul NIC's NUMA node $NIC_NUMA: re-isolating and rebooting"
+    sudo python3 $REPO/bin/fh-reisolate.py "$NIC_NUMA" --apply && sudo touch /var/tmp/fh-reisolated && sudo reboot
+    exit 0
+  fi
+fi
 
 # Peer MAC over the fronthaul link (the peer may still be booting).
 PEER_MAC=""
