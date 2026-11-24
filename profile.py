@@ -210,10 +210,17 @@ pc.defineParameter(
     advanced=True,
 )
 pc.defineParameter(
+    name="core_on_du",
+    description="Run the 5G core on the DU host instead of a separate node",
+    typ=portal.ParameterType.BOOLEAN,
+    defaultValue=True,
+    longDescription="Uses the Open5GS build in the image (bin/fh-core-local.sh), freeing a node for the tap.",
+)
+pc.defineParameter(
     name="tap_nodetype",
     description="Type of compute node for the tap that bridges and records the fronthaul",
     typ=portal.ParameterType.STRING,
-    defaultValue=node_types[1],
+    defaultValue=node_types[0],
     legalValues=node_types,
     longDescription="A d430 takes a firmware interrupt once per second that stalls it for about 430 us, "
                     "so as a tap it holds the fronthaul for that long each second. Use it only to compare.",
@@ -233,18 +240,19 @@ request = pc.makeRequestRSpec()
 radio_type, radio_atten = RADIOS[params.radio]
 cell_args = "BAND=78 ARFCN={} BW={} PCI=1 PLMN=99999 TAC=1".format(params.dl_arfcn, params.bandwidth)
 
-# Core network, as in srs-rf-matrix.
-role = "cn5g"
-cn_node = request.RawPC(role)
-cn_node.component_manager_id = COMP_MANAGER_ID
-cn_node.hardware_type = params.cn_nodetype
-cn_node.disk_image = UBUNTU_IMG
-cn_if = cn_node.addInterface("{}-if".format(role))
-cn_if.addAddress(pg.IPv4Address("192.168.1.1", "255.255.255.0"))
-cn_link = request.Link("{}-link".format(role))
-cn_link.setNoBandwidthShaping()
-cn_link.addInterface(cn_if)
-cn_node.addService(pg.Execute(shell="bash", command=OPEN5GS_DEPLOY_SCRIPT))
+# Core network, as in srs-rf-matrix, unless it runs on the DU host.
+if not params.core_on_du:
+    role = "cn5g"
+    cn_node = request.RawPC(role)
+    cn_node.component_manager_id = COMP_MANAGER_ID
+    cn_node.hardware_type = params.cn_nodetype
+    cn_node.disk_image = UBUNTU_IMG
+    cn_if = cn_node.addInterface("{}-if".format(role))
+    cn_if.addAddress(pg.IPv4Address("192.168.1.1", "255.255.255.0"))
+    cn_link = request.Link("{}-link".format(role))
+    cn_link.setNoBandwidthShaping()
+    cn_link.addInterface(cn_if)
+    cn_node.addService(pg.Execute(shell="bash", command=OPEN5GS_DEPLOY_SCRIPT))
 
 # The fronthaul: one link between the O-DU and the ProtO-RU host. fh-setup.sh finds its
 # interface by these addresses. The frames on it are raw Ethernet (eCPRI), untagged.
@@ -274,16 +282,21 @@ du = request.RawPC(node_name)
 du.component_manager_id = COMP_MANAGER_ID
 du.hardware_type = params.fh_nodetype
 du.disk_image = params.fh_image
-du_cn_if = du.addInterface("{}-cn-if".format(node_name))
-du_cn_if.addAddress(pg.IPv4Address("192.168.1.2", "255.255.255.0"))
-cn_link.addInterface(du_cn_if)
+if not params.core_on_du:
+    du_cn_if = du.addInterface("{}-cn-if".format(node_name))
+    du_cn_if.addAddress(pg.IPv4Address("192.168.1.2", "255.255.255.0"))
+    cn_link.addInterface(du_cn_if)
+    amf_args = "AMF_ADDR=192.168.1.1 AMF_BIND=192.168.1.2"
+else:
+    du.addService(pg.Execute(shell="bash", command=os.path.join(BIN_PATH, "fh-core-local.sh")))
+    amf_args = "AMF_ADDR=127.0.0.5 AMF_BIND=127.0.0.1"
 du_fh_if = du.addInterface("{}-fh-if".format(node_name))
 du_fh_if.addAddress(pg.IPv4Address("10.10.1.1", "255.255.255.0"))
 fh_link.addInterface(du_fh_if)
 du_ptp_if = du.addInterface("du-ptp-if")
 du_ptp_if.addAddress(pg.IPv4Address("10.10.2.1", "255.255.255.0"))
 ptp_link.addInterface(du_ptp_if)
-du.addService(pg.Execute(shell="bash", command="{} du {} AMF_ADDR=192.168.1.1 AMF_BIND=192.168.1.2".format(FH_SETUP_SCRIPT, cell_args)))
+du.addService(pg.Execute(shell="bash", command="{} du {} {}".format(FH_SETUP_SCRIPT, cell_args, amf_args)))
 # Attenuator control works from the compute nodes, not the NUCs. Set the start values for
 # the paths between the chosen radio and the allocated UEs (real attenuation is 30 + value dB).
 atten_start = {}
