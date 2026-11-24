@@ -27,7 +27,7 @@ separately (see the notes in the instructions).
 Deployed:
 
 - `cn5g`: Open5GS core (Dell R430), installed the way PowderTeam/srs-rf-matrix does it.
-- `du`: OCUDU O-DU and CU (Dell R740, image `fronthaul-d740-u26rt`).
+- `du`: OCUDU O-DU and CU (Dell R740, image `fronthaul-d740-u26rt-uhd410`).
 - `ruhost`: ProtO-RU software O-RU (Dell R740, same image), driving the radio.
 - `ru-sdr`: the radio on the matrix, X310 `x310-1` or N300 `n300-2`.
 - `ue1` (and optionally `ue2`): Intel NUC with a Quectel RM520 COTS UE.
@@ -112,7 +112,7 @@ Captures are in `/dev/shm/cap` (RAM). Copy them off the node before the experime
 
 BIN_PATH = "/local/repository/bin"
 UBUNTU_IMG = "urn:publicid:IDN+emulab.net+image+emulab-ops//UBUNTU22-64-STD"
-FH_IMG = "urn:publicid:IDN+emulab.net+image+nyunetworks//fronthaul-d740-u26rt"
+FH_IMG = "urn:publicid:IDN+emulab.net+image+nyunetworks//fronthaul-d740-u26rt-uhd410"
 COTS_UE_IMG = "urn:publicid:IDN+emulab.net+image+PowderTeam:cots-jammy-image"
 COMP_MANAGER_ID = "urn:publicid:IDN+emulab.net+authority+cm"
 # Unmodified from PowderTeam/srs-rf-matrix. It installs Open5GS and provisions the POWDER test SIMs.

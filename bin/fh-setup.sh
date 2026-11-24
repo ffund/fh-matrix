@@ -2,7 +2,7 @@
 # fh-setup.sh du|ru KEY=VALUE...
 #
 # Startup service for the DU host and the ProtO-RU host. Both run the
-# fronthaul-d740-u26rt image, which carries the builds and helper scripts in /opt/fh.
+# fronthaul-d740-u26rt-uhd410 image, which carries the builds and helper scripts in /opt/fh.
 # This script prepares the host, finds the fronthaul interface and the peer's MAC,
 # starts PTP (DU = grandmaster, RU = slave), and renders the config for this role
 # into /opt/fh/run. It does not start the gNB or ProtO-RU; see fh-run.sh.
@@ -24,7 +24,7 @@ sudo mkdir -p $RUN /dev/shm/cap; sudo chmod a+rwx $RUN /dev/shm/cap
 exec > >(tee -a $RUN/fh-setup.log) 2>&1
 echo "=== fh-setup $ROLE $(date -Is) band=$BAND arfcn=$ARFCN bw=$BW pci=$PCI plmn=$PLMN tac=$TAC"
 
-[ -x /opt/fh/ocudu/build/apps/gnb/gnb ] || { echo "!! /opt/fh is missing: this node is not running the fronthaul-d740-u26rt image"; exit 1; }
+[ -x /opt/fh/ocudu/build/apps/gnb/gnb ] || { echo "!! /opt/fh is missing: this node is not running the fronthaul-d740-u26rt-uhd410 image"; exit 1; }
 uname -r | grep -q realtime || echo "!! WARNING: not running the real-time kernel ($(uname -r))"
 sudo python3 /opt/fh/scripts/smi_rate.py | tee $RUN/smi.txt
 grep -q " 0.0 per second" $RUN/smi.txt || echo "!! WARNING: this node takes firmware interrupts; expect late fronthaul messages"
